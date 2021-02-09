@@ -1,0 +1,9 @@
+update GMS4.sms_customer_contacts
+set status = EmailVerifiedStatus
+where contract_id = ContractId;
+
+update GMS4.sms_customer_services
+set service_status_id = PP_ServiceStatusId, last_updated = current date
+where contract_id = ContractId;
+
+commit;
