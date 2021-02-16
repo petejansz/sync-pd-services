@@ -42,8 +42,6 @@ LOGGER_NAME = SCRIPT_NAME
 logger = None
 parser = OptionParser()
 
-CSV_HEADERS = 'CONTRACT_IDENTITY,ACCOUNT_EMAIL,CONTRACT_ID,EMAIL_VERIFIED,SERVICE_TYPE_IDS,SERVICE_STATUS_IDS'
-
 def parse_cli_args():
     description = 'Find, fix (sync) out-of-sync, PD player accounts\n'
     help_path = 'Working directory path (default=' + DEFAULT_EXTRACTS_DIR + ')'
@@ -53,6 +51,9 @@ def parse_cli_args():
     help_dbname = 'DB name (default=' + DEFAULT_DBNAME + ')'
     help_db2opts = 'DB2 opts (default=' + DEFAULT_DB2OPTS + ')'
     help_days_back = 'Find player accounts where changed days back (default=' + str(DEFAULT_DAYS_BACK) + ')'
+
+    log_level_choices = [5, logging.DEBUG, 15, logging.INFO, logging.WARN, logging.ERROR, logging.CRITICAL]
+    help_log_level = 'SUBDEBUG: 5| DEBUG: 10| VERBOSE: 15|INFO: default(20)|WARN: 30|ERROR: 40|CRITICAL: 50'
 
     parser.description = description
     parser.add_option('--path', action='store', type='str',
@@ -67,6 +68,8 @@ def parse_cli_args():
                       help='No db2 access. Read csvfile and tells you what it proposes to do', dest='nodb', default=False)
     parser.add_option('--find', action='store_true',
                       help='Only find, export to the csvfile, do not update players', dest='find', default=False)
+    parser.add_option('--log_level', action='store', type=int, #choices=log_level_choices,
+                      help=help_log_level, dest='log_level', default=logging.INFO)
     parser.add_option('--days_back', action='store', type='int',
                       dest='days_back', help=help_days_back, default=DEFAULT_DAYS_BACK)
     parser.add_option('--dbname', action='store', type='str',
@@ -76,7 +79,7 @@ def parse_cli_args():
 
     return parser.parse_args()
 
-def init_work_dir(options):
+def init_db2_options(options):
 
     logfile_name = os.path.join(DEFAULT_LOG_DIR, 'sync-pd-services-db2-clp.log.' + date.today().isoformat())
     historylog_name = os.path.join(DEFAULT_LOG_DIR, 'sync-pd-services-history.log')
@@ -87,6 +90,10 @@ def init_work_dir(options):
         os.environ['DB2OPTIONS'] = (
             DEFAULT_DB2OPTS + ' -z ' + logfile_name + ' -l ' + historylog_name)
 
+    logger.verbose('DB2 CLP logfile: ' + logfile_name)
+    logger.verbose('DB2 CLP history logfile: ' + historylog_name)
+    logger.verbose('DB2OPTIONS: ' + os.environ['DB2OPTIONS'])
+
     return (logfile_name, historylog_name)
 
 def convert_popen_strs_to_str(strs):
@@ -94,11 +101,14 @@ def convert_popen_strs_to_str(strs):
     return msg.replace('\r', '').replace('\n', '')
 
 def run_export_sync_pd_services(options, logfile_name, historylog_name):
+    logger.debug('Preaparing run_export_sync_pd_services ...')
+
     # Archive an existing CSV file?
     default_export_filename = os.path.join(options.path, DEFAULT_EXPORT_DEL_CSV_FILENAME)
     if os.path.exists(default_export_filename):
         date_filename = DEFAULT_EXPORT_DEL_CSV_FILENAME + '.' + date.today().isoformat()
         archive_export_filename = os.path.join(DEFAULT_LOG_DIR, date_filename)
+        logger.debug('Archiving: ' + archive_export_filename)
         shutil.move(default_export_filename, archive_export_filename)
 
     connect_session = Popen(['db2', ('connect to ' + options.dbname)], stdout=PIPE, stderr=PIPE)
@@ -116,6 +126,7 @@ def run_export_sync_pd_services(options, logfile_name, historylog_name):
         sql_stmt = sql_stmt.replace(
             'current date -1 day', 'current date ' + str(options.days_back) + ' day')
 
+    logger.verbose('Querying current date ' + str(options.days_back) + ' day')
     process_session.stdin.write(sql_stmt)
 
     stdoutStrings, stderrStrings = process_session.communicate()
@@ -130,6 +141,7 @@ def check_hadr(options):
     """
     Raise exception if HADR and role is Standby.
     """
+    logger.verbose('Checking HADR ...')
     hadr_enabled = False
     role_standby = False
     process_session = Popen(['db2', ('get snapshot for database on ' + options.dbname) ], stdout=PIPE, stderr=PIPE)
@@ -174,47 +186,37 @@ def fix_player(player):
 
     # Scenario # 1
     if player.emailVerified == VERIFIED and player.portalService == PREACTIVE and player.secondChanceService == PREACTIVE:
-        fixed_player.emailVerified = VERIFIED
         fixed_player.suspend()
     # 2
     elif player.emailVerified == VERIFIED and player.portalService == PREACTIVE and player.secondChanceService == ACTIVE:
-        fixed_player.emailVerified = VERIFIED
         fixed_player.activate()
     # 3
     elif player.emailVerified == NOT_VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == PREACTIVE:
-        fixed_player.emailVerified = NOT_VERIFIED
         fixed_player.preactivate()
     # 4
     elif player.emailVerified == VERIFIED and player.portalService == ACTIVE and player.secondChanceService == PREACTIVE:
-        fixed_player.emailVerified = VERIFIED
         fixed_player.activate()
     # 5
     elif player.emailVerified == VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == PREACTIVE:
-        fixed_player.emailVerified = VERIFIED
         fixed_player.suspend()
     # 6
     elif player.emailVerified == VERIFIED and player.portalService == PREACTIVE and player.secondChanceService == SUSPENDED:
-        fixed_player.emailVerified = VERIFIED
         fixed_player.suspend()
     # 7
     elif player.emailVerified == VERIFIED and player.portalService == ACTIVE and player.secondChanceService == SUSPENDED:
-        fixed_player.emailVerified = VERIFIED
         fixed_player.suspend()
     # 8
     elif player.emailVerified == VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == ACTIVE:
-        fixed_player.emailVerified = VERIFIED
         fixed_player.suspend()
     # 9
     elif player.emailVerified == NOT_VERIFIED and player.portalService == ACTIVE and player.secondChanceService == ACTIVE:
-        fixed_player.emailVerified = NOT_VERIFIED
         fixed_player.preactivate()
     # 10
     elif player.emailVerified == VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == SUSPENDED:
         pass
     # 11
     elif player.emailVerified == NOT_VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == SUSPENDED:
-        fixed_player.emailVerified = VERIFIED
-        fixed_player.suspend()
+        pass #fixed_player.suspend()
 
     return fixed_player
 
@@ -229,13 +231,12 @@ def report_player(processed_count, total_count, player, fixed_player):
     logger.info(msg)
 
 def no_db(options):
-    options.csvfile = options.path + '/' + options.csvfile
 
     processed_count = 0
     total_count = sum(1 for line in open(options.csvfile))
     csv_file = open(options.csvfile)
     # Pring headings
-    format = '                   %s, %s, %s, %s, %s, %s'
+    format = '%s, %s, %s, %s, %s, %s'
     print(format % (
         'contract_identity',
         'contract_id',
@@ -254,28 +255,59 @@ def no_db(options):
 
         processed_count += 1
 
-        report_player(processed_count, total_count, player, fixed_player)
+        print(fixed_player)
 
     exit_value = 0
     exit(exit_value)
 
+def _subdebug(self, message, *args, **kws):
+    """
+    Used by init_logger
+    """
+    self.log(logging.SUBDEBUG, message, *args, **kws)
+
+def _verbose(self, message, *args, **kws):
+    """
+    Used by init_logger
+    """
+    self.log(logging.VERBOSE, message, *args, **kws)
+
 def init_logger(options):
     global logger
-    logging.config.fileConfig(
-        options.path + '/logging.conf', disable_existing_loggers=False)
-    logger = logging.getLogger(LOGGER_NAME)
+    FORMAT_BASE = '%(levelname)s - %(module)s - %(message)s'
 
-    file_formatter = logging.Formatter(
-        fmt='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
+    logger = logging.getLogger(__name__)
 
+    # Define additional logging levels, SUBDEBUG and VERBOSE: SUBDEBUG < DEBUG < VERBOSE < INFO
+    logging.SUBDEBUG = int(logging.DEBUG / 2)
+    logging.addLevelName(logging.SUBDEBUG, 'SUBDEBUG')
+    logging.Logger.subdebug = _subdebug
+
+    logging.VERBOSE = logging.INFO - 5
+    logging.addLevelName(logging.VERBOSE, 'VERBOSE')
+    logging.Logger.verbose = _verbose
+
+    # Default level:
+    logger.setLevel(options.log_level)
+
+    # Setup the console logger:
+    consoleHandler = logging.StreamHandler()
+    consoleHandler_formatter = logging.Formatter(fmt=FORMAT_BASE)
+    consoleHandler.setFormatter(consoleHandler_formatter)
+    consoleHandler.setLevel(options.log_level)
+    logger.addHandler(consoleHandler)
+
+    # Setup the log file:
+    file_formatter = logging.Formatter(fmt='%(asctime)s - ' + FORMAT_BASE)
     if not os.path.exists(DEFAULT_LOG_DIR):
         os.mkdir(DEFAULT_LOG_DIR)
-
     logfilename = os.path.join(DEFAULT_LOG_DIR, SCRIPT_NAME + '.log')
     fileHandler = logging.FileHandler(logfilename)
     fileHandler.setFormatter(file_formatter)
-    logger.setLevel(logging.DEBUG)
+    fileHandler.setLevel(options.log_level)
     logger.addHandler(fileHandler)
+
+    logger.verbose('Logger initialized, logLevel: %s' % options.log_level)
 
 def main():
     exit_value = 1
@@ -288,11 +320,11 @@ def main():
     options.path = os.path.abspath(options.path)
     os.chdir(options.path)
     init_logger(options)
-    logger.info('Logger initialized - Starting application')
-
-    if options.nodb: no_db(options)
+    logger.verbose('Starting application')
 
     try:
+        if options.nodb: no_db(options)
+
         options.export_sql = os.path.join(options.path, options.export_sql)
         if not os.path.exists(options.export_sql):
             msg = 'Export SQL file not found:' + options.export_sql
@@ -305,22 +337,21 @@ def main():
 
         options.csvfile = os.path.join(options.path, options.csvfile)
 
-        logger.info('Calling check_hadr() ...')
         check_hadr(options)
-        (logfile_name, historylog_name) = init_work_dir(options)
-        logger.info('Calling run_export_sync_pd_services() ...')
+        (logfile_name, historylog_name) = init_db2_options(options)
         run_export_sync_pd_services(options, logfile_name, historylog_name)
 
         if (options.find):
             logger.info('Exiting.')
             exit(0)
 
-        logger.debug('Preparing to process players ...')
+        logger.verbose('Preparing to process players ...')
         connect_session = Popen(['db2', ('connect to ' + options.dbname)], stdout=PIPE, stderr=PIPE)
         if connect_session.wait():
             stdoutStrings, stderrStrings = connect_session.communicate()
             raise Exception(convert_popen_strs_to_str(stdoutStrings))
 
+        logger.verbose('Connected to ' + options.dbname)
         processed_count = 0
         total_count = sum(1 for line in open(options.csvfile))
         logger.info('Exported ' + str(total_count) + ' players')

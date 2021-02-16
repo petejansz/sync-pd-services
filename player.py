@@ -37,14 +37,17 @@ class Player(object):
     secondChanceService = property(get_sc_status, set_sc_status)
 
     def preactivate(self):
+        self.email_verified_status = '0'
         self.pp_status = '1'
         self.sc_status = '1'
 
     def activate(self):
+        self.email_verified_status = '1'
         self.pp_status = '2'
         self.sc_status = '2'
 
     def suspend(self):
+        self.email_verified_status = '1'
         self.pp_status = '3'
         self.sc_status = '3'
 
