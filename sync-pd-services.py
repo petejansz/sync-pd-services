@@ -52,8 +52,14 @@ def parse_cli_args():
     help_db2opts = 'DB2 opts (default=' + DEFAULT_DB2OPTS + ')'
     help_days_back = 'Find player accounts where changed days back (default=' + str(DEFAULT_DAYS_BACK) + ')'
 
-    log_level_choices = [5, logging.DEBUG, 15, logging.INFO, logging.WARN, logging.ERROR, logging.CRITICAL]
-    help_log_level = 'SUBDEBUG: 5| DEBUG: 10| VERBOSE: 15|INFO: default(20)|WARN: 30|ERROR: 40|CRITICAL: 50'
+    SUBDEBUG = int(logging.DEBUG / 2)
+    VERBOSE = logging.INFO - 5
+
+    log_level_choices = [SUBDEBUG, logging.DEBUG, VERBOSE,
+                         logging.INFO, logging.WARN, logging.ERROR, logging.CRITICAL]
+    list_string = map(str, log_level_choices)
+    help_log_level = 'SUBDEBUG: %s| DEBUG: %s| VERBOSE: %s| INFO: default(%s)| WARN: %s| ERROR: %s| CRITICAL: %s' % tuple(
+        list_string)
 
     parser.description = description
     parser.add_option('--path', action='store', type='str',
@@ -68,8 +74,10 @@ def parse_cli_args():
                       help='No db2 access. Read csvfile and tells you what it proposes to do', dest='nodb', default=False)
     parser.add_option('--find', action='store_true',
                       help='Only find, export to the csvfile, do not update players', dest='find', default=False)
-    parser.add_option('--log_level', action='store', type=int, #choices=log_level_choices,
+
+    parser.add_option('--log_level', action='store', type=int,
                       help=help_log_level, dest='log_level', default=logging.INFO)
+
     parser.add_option('--days_back', action='store', type='int',
                       dest='days_back', help=help_days_back, default=DEFAULT_DAYS_BACK)
     parser.add_option('--dbname', action='store', type='str',
@@ -176,6 +184,9 @@ def read_file(filename):
     return s
 
 def fix_player(player):
+    if player.account_email.count('@calottery.com'):
+        return player
+
     fixed_player = copy.deepcopy(player)
 
     NOT_VERIFIED = '0'
@@ -186,37 +197,47 @@ def fix_player(player):
 
     # Scenario # 1
     if player.emailVerified == VERIFIED and player.portalService == PREACTIVE and player.secondChanceService == PREACTIVE:
+        fixed_player.scenario = 1
         fixed_player.suspend()
     # 2
     elif player.emailVerified == VERIFIED and player.portalService == PREACTIVE and player.secondChanceService == ACTIVE:
+        fixed_player.scenario = 2
         fixed_player.activate()
     # 3
     elif player.emailVerified == NOT_VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == PREACTIVE:
+        fixed_player.scenario = 3
         fixed_player.preactivate()
     # 4
     elif player.emailVerified == VERIFIED and player.portalService == ACTIVE and player.secondChanceService == PREACTIVE:
+        fixed_player.scenario = 4
         fixed_player.activate()
     # 5
     elif player.emailVerified == VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == PREACTIVE:
+        fixed_player.scenario = 5
         fixed_player.suspend()
     # 6
     elif player.emailVerified == VERIFIED and player.portalService == PREACTIVE and player.secondChanceService == SUSPENDED:
+        fixed_player.scenario = 6
         fixed_player.suspend()
     # 7
     elif player.emailVerified == VERIFIED and player.portalService == ACTIVE and player.secondChanceService == SUSPENDED:
+        fixed_player.scenario = 7
         fixed_player.suspend()
     # 8
     elif player.emailVerified == VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == ACTIVE:
+        fixed_player.scenario = 8
         fixed_player.suspend()
     # 9
     elif player.emailVerified == NOT_VERIFIED and player.portalService == ACTIVE and player.secondChanceService == ACTIVE:
+        fixed_player.scenario = 9
         fixed_player.preactivate()
     # 10
     elif player.emailVerified == VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == SUSPENDED:
-        pass
+        fixed_player.scenario = 10
     # 11
     elif player.emailVerified == NOT_VERIFIED and player.portalService == SUSPENDED and player.secondChanceService == SUSPENDED:
-        pass #fixed_player.suspend()
+        fixed_player.scenario = 11
+        pass  # fixed_player.suspend()
 
     return fixed_player
 
@@ -236,8 +257,9 @@ def no_db(options):
     total_count = sum(1 for line in open(options.csvfile))
     csv_file = open(options.csvfile)
     # Pring headings
-    format = '%s, %s, %s, %s, %s, %s'
-    print(format % (
+    format = '%s, %s, %s, %s, %s, %s, %s'
+    print (format % (
+        'scenario',
         'contract_identity',
         'contract_id',
         'email_verified',
@@ -255,7 +277,8 @@ def no_db(options):
 
         processed_count += 1
 
-        print(fixed_player)
+        if fixed_player.Scenario and fixed_player.Scenario < 10:
+            print(fixed_player)
 
     exit_value = 0
     exit(exit_value)
@@ -342,7 +365,7 @@ def main():
         run_export_sync_pd_services(options, logfile_name, historylog_name)
 
         if (options.find):
-            logger.info('Exiting.')
+            logger.verbose('Exiting.')
             exit(0)
 
         logger.verbose('Preparing to process players ...')
@@ -354,7 +377,7 @@ def main():
         logger.verbose('Connected to ' + options.dbname)
         processed_count = 0
         total_count = sum(1 for line in open(options.csvfile))
-        logger.info('Exported ' + str(total_count) + ' players')
+        logger.verbose('Exported ' + str(total_count) + ' players')
 
         csv_file = open(options.csvfile)
         for csv_line in csv_file:

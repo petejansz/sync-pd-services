@@ -11,6 +11,7 @@ class Player(object):
             tokens[3].replace('+', '').replace('.', '')))
         self.pp_status = tokens[6].strip()
         self.sc_status = tokens[7].strip()
+        self.scenario = 0
 
     def get_contract_identity(self): return self.contract_identity
     def set_contract_identity(self, contract_identity): self.contract_identity = contract_identity
@@ -35,6 +36,10 @@ class Player(object):
     def get_sc_status(self): return self.sc_status
     def set_sc_status(self, sc_status): self.sc_status = sc_status
     secondChanceService = property(get_sc_status, set_sc_status)
+
+    def get_scenario(self): return self.scenario
+    def set_scenario(self, scenario): self.scenario = scenario
+    Scenario = property(get_scenario, set_scenario)
 
     def preactivate(self):
         self.email_verified_status = '0'
@@ -86,8 +91,9 @@ class Player(object):
         return is_equal
 
     def __str__(self):
-        format = '%s, %s, %s, %s, %s, %s'
+        format = '%s, %s, %s, %s, %s, %s, %s'
         return format % (
+            str(self.scenario),
             self.contract_identity,
             self.contract_id,
             self.email_verified_status,
@@ -97,8 +103,9 @@ class Player(object):
         )
 
 def try_player():
-    format = '%s, %s, %s, %s, %s, %s'
-    print(format % (
+    format = '%s, %s, %s, %s, %s, %s, %s'
+    print (format % (
+        'scenario',
         'contract_identity',
         'contract_id',
         'email_verified',
