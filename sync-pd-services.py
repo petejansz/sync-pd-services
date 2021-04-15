@@ -71,13 +71,13 @@ def parse_cli_args():
     parser.add_option('--update_sqlt', action='store', help=help_update_sqlt, default=DEFAULT_UPDATE_PLAYER_SQLT_FILENAME,
                       type='str', dest='update_sqlt', metavar='FILE')
     parser.add_option('--nodb', action='store_true',
-                      help='No db2 access. Read csvfile and tells you what it proposes to do', dest='nodb', default=False)
+                      help='No db2 access. Read csvfile and report proposed synced changes', dest='nodb', default=False)
     parser.add_option('--find', action='store_true',
-                      help='Only find, export to the csvfile, do not update players', dest='find', default=False)
-
+                      help='Only find, export to the csvfile, report proposed changes, do not update players', dest='find', default=False)
+    parser.add_option('--sync', action='store_true',
+                      help='Find, update/sync player accounts', dest='sync', default=False)
     parser.add_option('--log_level', action='store', type=int,
                       help=help_log_level, dest='log_level', default=logging.INFO)
-
     parser.add_option('--days_back', action='store', type='int',
                       dest='days_back', help=help_days_back, default=DEFAULT_DAYS_BACK)
     parser.add_option('--dbname', action='store', type='str',
@@ -241,13 +241,14 @@ def fix_player(player):
 
     return fixed_player
 
-def report_player(processed_count, total_count, player, fixed_player):
-
-    stats_str = '%03s/%s' % (str(processed_count), str(total_count))
-    msg = stats_str + ' skipped %s' % fixed_player
-
-    if player != fixed_player:
-        msg = stats_str + ' synced  %s' % fixed_player
+def report_player(processed_count, total_count, fixed_player, action_str):
+    format_str = '%03s/%s %s %s'
+    msg = format_str % (
+        str(processed_count),
+        str(total_count),
+        action_str,
+        fixed_player
+    )
 
     logger.info(msg)
 
@@ -256,17 +257,6 @@ def no_db(options):
     processed_count = 0
     total_count = sum(1 for line in open(options.csvfile))
     csv_file = open(options.csvfile)
-    # Pring headings
-    format = '%s, %s, %s, %s, %s, %s, %s'
-    print (format % (
-        'scenario',
-        'contract_identity',
-        'contract_id',
-        'email_verified',
-        'pp_service',
-        'sc_service',
-        'username'
-    ))
 
     for csv_line in csv_file:
         if csv_line.find('CONTRACT_IDENTITY') >= 0:
@@ -276,12 +266,13 @@ def no_db(options):
         fixed_player = fix_player(player)
 
         processed_count += 1
+        action_str = 'skip'
 
         if fixed_player.Scenario and fixed_player.Scenario < 10:
-            print(fixed_player)
+            if player != fixed_player:
+                action_str = 'sync'
 
-    exit_value = 0
-    exit(exit_value)
+        report_player(processed_count, total_count, fixed_player, action_str)
 
 def _subdebug(self, message, *args, **kws):
     """
@@ -336,6 +327,10 @@ def main():
     exit_value = 1
     options, args = parse_cli_args()
 
+    if (options.nodb and options.sync) or (not options.nodb and not options.find and not options.sync):
+        parser.print_help()
+        exit(exit_value)
+
     if not os.path.exists(options.path):
         sys.stderr.write('\nPath not found: ' + options.path)
         exit(exit_value)
@@ -346,7 +341,10 @@ def main():
     logger.verbose('Starting application')
 
     try:
-        if options.nodb: no_db(options)
+        if options.nodb:
+            no_db(options)
+            exit_value = 0
+            exit(exit_value)
 
         options.export_sql = os.path.join(options.path, options.export_sql)
         if not os.path.exists(options.export_sql):
@@ -360,15 +358,23 @@ def main():
 
         options.csvfile = os.path.join(options.path, options.csvfile)
 
-        check_hadr(options)
+        if not options.find:
+            check_hadr(options)
         (logfile_name, historylog_name) = init_db2_options(options)
         run_export_sync_pd_services(options, logfile_name, historylog_name)
 
         if (options.find):
+            no_db(options)
             logger.verbose('Exiting.')
-            exit(0)
+            exit_value = 0
+            exit(exit_value)
 
-        logger.verbose('Preparing to process players ...')
+        # If we're here, unless we said --sync exit else do it!
+        if not options.sync:
+            exit_value = 0
+            exit(exit_value)
+
+        logger.verbose('Preparing to sync player accounts ...')
         connect_session = Popen(['db2', ('connect to ' + options.dbname)], stdout=PIPE, stderr=PIPE)
         if connect_session.wait():
             stdoutStrings, stderrStrings = connect_session.communicate()
@@ -386,8 +392,10 @@ def main():
 
             player = Player(csv_line)
             fixed_player = fix_player(player)
+            action_str = 'skipped'
 
             if fixed_player != player:
+                action_str = 'synced'
                 sql_stmt = create_sql_stmt(options, fixed_player)
 
                 process_session = Popen(['db2', '-z', logfile_name, '-l', historylog_name], stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -399,7 +407,7 @@ def main():
                 if emsg.count('error'): raise Exception(emsg)
 
             processed_count += 1
-            report_player(processed_count, total_count, player, fixed_player)
+            report_player(processed_count, total_count, fixed_player, action_str)
 
         exit_value = 0
     except Exception as error:
