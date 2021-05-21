@@ -23,7 +23,7 @@ from (
             c.contract_status_id != 6 and -- not hidden
             cc.contact_type_id = 1 and
             cs.service_type_id in ( 1, 500 )    -- PP or SC
-            and date(cc.last_updated) between current date -1 day and current timestamp -1 hour
+            and cc.last_updated between current date -1 day and current timestamp -1 hour
     group by c.contract_identity, cc.value, cs.contract_id, cc.status, cs.service_type_id, cs.service_status_id
     )
 group by contract_identity, ACCOUNT_EMAIL, contract_id, email_verified
